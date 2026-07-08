@@ -43,6 +43,7 @@ public class SimuladorDroneGrid extends JPanel {
 
     private No[][] gradeNos = new No[LINHAS][COLUNAS];
     private No noAtualDrone;
+    private No baseNo;
     
     private double droneX, droneY;
     private List<No> currentPath = null;
@@ -53,6 +54,7 @@ public class SimuladorDroneGrid extends JPanel {
 
     private List<No> entregasPendentes = new ArrayList<>();
     private No destinoAtual = null;
+    private boolean retornandoParaBase = false;
 
     public SimuladorDroneGrid() {
         setFocusable(true);
@@ -63,11 +65,12 @@ public class SimuladorDroneGrid extends JPanel {
         addKeyListener(new KeyAdapter() {
             @Override
             public void keyPressed(KeyEvent e) {
-                if (currentPath != null || !entregasPendentes.isEmpty()) {
+                if (currentPath != null || !entregasPendentes.isEmpty() || retornandoParaBase) {
                     timer.stop();
                     currentPath = null;
                     entregasPendentes.clear();
                     destinoAtual = null;
+                    retornandoParaBase = false;
                     statusMessage = "Piloto Automático desligado. Controle manual.";
                 }
 
@@ -100,6 +103,7 @@ public class SimuladorDroneGrid extends JPanel {
         currentPath = null;
         entregasPendentes.clear();
         destinoAtual = null;
+        retornandoParaBase = false;
 
         for (int l = 0; l < LINHAS; l++) {
             for (int c = 0; c < COLUNAS; c++) {
@@ -108,8 +112,9 @@ public class SimuladorDroneGrid extends JPanel {
             }
         }
         
-        gradeNos[0][0].tipo = TipoLocal.BASE;
-        gradeNos[0][0].entregue = false;
+        baseNo = gradeNos[0][0];
+        baseNo.tipo = TipoLocal.BASE;
+        baseNo.entregue = false;
 
         espalharPontosDeInteresse(TipoLocal.FARMACIA, 3);
         espalharPontosDeInteresse(TipoLocal.HOSPITAL, 2);
@@ -117,7 +122,7 @@ public class SimuladorDroneGrid extends JPanel {
 
         atualizarArestas();
         
-        noAtualDrone = gradeNos[0][0];
+        noAtualDrone = baseNo;
         droneX = noAtualDrone.coluna * TAMANHO_CELULA;
         droneY = noAtualDrone.linha * TAMANHO_CELULA;
         statusMessage = "Novo mapa gerado com hospitais, farmácias e residências.";
@@ -178,6 +183,8 @@ public class SimuladorDroneGrid extends JPanel {
 
     public void fazerTodasAsEntregas() {
         entregasPendentes.clear();
+        retornandoParaBase = false;
+        
         for (int l = 0; l < LINHAS; l++) {
             for (int c = 0; c < COLUNAS; c++) {
                 TipoLocal tipo = gradeNos[l][c].tipo;
@@ -187,8 +194,8 @@ public class SimuladorDroneGrid extends JPanel {
             }
         }
 
-        if (entregasPendentes.isEmpty()) {
-            statusMessage = "Todos os locais já receberam entregas!";
+        if (entregasPendentes.isEmpty() && noAtualDrone == baseNo) {
+            statusMessage = "Todos os locais já receberam entregas e o drone está na base!";
             repaint();
             return;
         }
@@ -199,11 +206,18 @@ public class SimuladorDroneGrid extends JPanel {
 
     private void iniciarProximaEntrega() {
         if (entregasPendentes.isEmpty()) {
-            currentPath = null;
-            destinoAtual = null;
-            statusMessage = "Todas as entregas foram concluídas com sucesso!";
-            timer.stop();
-            repaint();
+            if (noAtualDrone != baseNo && !retornandoParaBase) {
+                retornandoParaBase = true;
+                destinoAtual = baseNo;
+                encontrarRota(noAtualDrone, destinoAtual);
+            } else {
+                currentPath = null;
+                destinoAtual = null;
+                retornandoParaBase = false;
+                statusMessage = "Todas as entregas concluídas! O drone retornou à Base.";
+                timer.stop();
+                repaint();
+            }
             return;
         }
 
@@ -240,7 +254,13 @@ public class SimuladorDroneGrid extends JPanel {
             if (atual == fim) {
                 currentPath = caminho;
                 pathIndex = 0;
-                statusMessage = "Faltam " + entregasPendentes.size() + " locais. Rumo à " + fim.tipo + ".";
+                
+                if (retornandoParaBase) {
+                    statusMessage = "Entregas finalizadas. Retornando para a Base...";
+                } else {
+                    statusMessage = "Faltam " + entregasPendentes.size() + " locais. Rumo à " + fim.tipo + ".";
+                }
+                
                 timer.start();
                 repaint();
                 return;
@@ -256,13 +276,15 @@ public class SimuladorDroneGrid extends JPanel {
             }
         }
         
-        entregasPendentes.remove(fim);
+        if (!retornandoParaBase) {
+            entregasPendentes.remove(fim);
+        }
         iniciarProximaEntrega();
     }
 
     private void animateDrone() {
         if (currentPath == null || pathIndex >= currentPath.size() - 1) {
-            if (destinoAtual != null) {
+            if (destinoAtual != null && !retornandoParaBase) {
                 destinoAtual.entregue = true;
                 entregasPendentes.remove(destinoAtual);
             }
@@ -420,7 +442,7 @@ public class SimuladorDroneGrid extends JPanel {
 
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
-            JFrame frame = new JFrame("Simulador de Entregas: Rota Completa");
+            JFrame frame = new JFrame("Simulador de Entregas: Rota Completa com Retorno");
             frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
             frame.setLayout(new BorderLayout());
 
