@@ -12,9 +12,6 @@ import java.util.Set;
 
 public class SimuladorDroneGrid extends JPanel {
 
-    // ==========================================
-    // 1. CONFIGURAÇÃO DA GRADE E DIMENSÕES
-    // ==========================================
     private final int LINHAS = 16;
     private final int COLUNAS = 16;
     private final int TAMANHO_CELULA = 50;
@@ -27,28 +24,26 @@ public class SimuladorDroneGrid extends JPanel {
     private final int MINI_X = 20;
     private final int MINI_Y = 20;
 
-    // ==========================================
-    // 2. ESTRUTURA DO GRAFO (NÓS)
-    // ==========================================
+    enum TipoLocal {
+        VAZIO, OBSTACULO, BASE, FARMACIA, HOSPITAL, RESIDENCIA
+    }
+
     class No {
         int linha, coluna;
-        boolean ehObstaculo;
+        TipoLocal tipo;
         List<No> vizinhos = new ArrayList<>();
 
-        No(int linha, int coluna, boolean ehObstaculo) {
+        No(int linha, int coluna, TipoLocal tipo) {
             this.linha = linha;
             this.coluna = coluna;
-            this.ehObstaculo = ehObstaculo;
+            this.tipo = tipo;
         }
     }
 
     private No[][] gradeNos = new No[LINHAS][COLUNAS];
     private No noAtualDrone;
     
-    // ==========================================
-    // 3. ESTADO DA ANIMAÇÃO E ROTAS
-    // ==========================================
-    private double droneX, droneY; // Posição em pixels para animação suave
+    private double droneX, droneY;
     private List<No> currentPath = null;
     private int pathIndex = 0;
     private javax.swing.Timer timer;
@@ -58,11 +53,9 @@ public class SimuladorDroneGrid extends JPanel {
     public SimuladorDroneGrid() {
         setFocusable(true);
         
-        // Inicializa mapa e timer de animação
         gerarMapaAleatorio();
         timer = new javax.swing.Timer(16, e -> animateDrone());
 
-        // Controle Manual (Interrompe rotas automáticas)
         addKeyListener(new KeyAdapter() {
             @Override
             public void keyPressed(KeyEvent e) {
@@ -86,7 +79,6 @@ public class SimuladorDroneGrid extends JPanel {
                     proximoNo = gradeNos[noAtualDrone.linha][noAtualDrone.coluna + 1];
                 }
 
-                // Move apenas se for uma aresta válida (não for obstáculo)
                 if (proximoNo != null && noAtualDrone.vizinhos.contains(proximoNo)) {
                     noAtualDrone = proximoNo;
                     droneX = noAtualDrone.coluna * TAMANHO_CELULA;
@@ -97,30 +89,43 @@ public class SimuladorDroneGrid extends JPanel {
         });
     }
 
-    // ==========================================
-    // 4. LÓGICA DO MAPA E CLIMA
-    // ==========================================
     public void gerarMapaAleatorio() {
         if (timer != null) timer.stop();
         currentPath = null;
 
-        // Cria os nós com 25% de chance de ser obstáculo
         for (int l = 0; l < LINHAS; l++) {
             for (int c = 0; c < COLUNAS; c++) {
                 boolean obstaculo = random.nextDouble() > 0.75;
-                // Garante que a base (0,0) não seja obstáculo
-                if (l == 0 && c == 0) obstaculo = false;
-                gradeNos[l][c] = new No(l, c, obstaculo);
+                gradeNos[l][c] = new No(l, c, obstaculo ? TipoLocal.OBSTACULO : TipoLocal.VAZIO);
             }
         }
         
+        gradeNos[0][0].tipo = TipoLocal.BASE;
+
+        espalharPontosDeInteresse(TipoLocal.FARMACIA, 3);
+        espalharPontosDeInteresse(TipoLocal.HOSPITAL, 2);
+        espalharPontosDeInteresse(TipoLocal.RESIDENCIA, 6);
+
         atualizarArestas();
         
         noAtualDrone = gradeNos[0][0];
         droneX = noAtualDrone.coluna * TAMANHO_CELULA;
         droneY = noAtualDrone.linha * TAMANHO_CELULA;
-        statusMessage = "Novo mapa gerado. Drone na base (0,0).";
+        statusMessage = "Novo mapa gerado com hospitais, farmácias e residências.";
         repaint();
+    }
+
+    private void espalharPontosDeInteresse(TipoLocal tipo, int quantidade) {
+        int adicionados = 0;
+        while (adicionados < quantidade) {
+            int l = random.nextInt(LINHAS);
+            int c = random.nextInt(COLUNAS);
+            
+            if (gradeNos[l][c].tipo == TipoLocal.VAZIO) {
+                gradeNos[l][c].tipo = tipo;
+                adicionados++;
+            }
+        }
     }
 
     public void aleatorizarClima() {
@@ -129,15 +134,16 @@ public class SimuladorDroneGrid extends JPanel {
 
         for (int l = 0; l < LINHAS; l++) {
             for (int c = 0; c < COLUNAS; c++) {
-                // Não bloqueia a posição atual do drone
-                if (gradeNos[l][c] != noAtualDrone) {
-                    gradeNos[l][c].ehObstaculo = random.nextDouble() > 0.70; // 30% de chance
+                No atual = gradeNos[l][c];
+                if (atual.tipo == TipoLocal.VAZIO || atual.tipo == TipoLocal.OBSTACULO) {
+                    if (atual != noAtualDrone) {
+                        atual.tipo = random.nextDouble() > 0.70 ? TipoLocal.OBSTACULO : TipoLocal.VAZIO;
+                    }
                 }
             }
         }
         atualizarArestas();
         
-        // Alinha os pixels exatamente na grade caso estivesse no meio de uma animação
         droneX = noAtualDrone.coluna * TAMANHO_CELULA;
         droneY = noAtualDrone.linha * TAMANHO_CELULA;
         statusMessage = "O clima mudou! Novos obstáculos surgiram.";
@@ -149,33 +155,36 @@ public class SimuladorDroneGrid extends JPanel {
             for (int c = 0; c < COLUNAS; c++) {
                 No atual = gradeNos[l][c];
                 atual.vizinhos.clear();
-                if (atual.ehObstaculo) continue;
+                if (atual.tipo == TipoLocal.OBSTACULO) continue;
 
-                if (l > 0 && !gradeNos[l - 1][c].ehObstaculo) atual.vizinhos.add(gradeNos[l - 1][c]);
-                if (l < LINHAS - 1 && !gradeNos[l + 1][c].ehObstaculo) atual.vizinhos.add(gradeNos[l + 1][c]);
-                if (c > 0 && !gradeNos[l][c - 1].ehObstaculo) atual.vizinhos.add(gradeNos[l][c - 1]);
-                if (c < COLUNAS - 1 && !gradeNos[l][c + 1].ehObstaculo) atual.vizinhos.add(gradeNos[l][c + 1]);
+                if (l > 0 && gradeNos[l - 1][c].tipo != TipoLocal.OBSTACULO) atual.vizinhos.add(gradeNos[l - 1][c]);
+                if (l < LINHAS - 1 && gradeNos[l + 1][c].tipo != TipoLocal.OBSTACULO) atual.vizinhos.add(gradeNos[l + 1][c]);
+                if (c > 0 && gradeNos[l][c - 1].tipo != TipoLocal.OBSTACULO) atual.vizinhos.add(gradeNos[l][c - 1]);
+                if (c < COLUNAS - 1 && gradeNos[l][c + 1].tipo != TipoLocal.OBSTACULO) atual.vizinhos.add(gradeNos[l][c + 1]);
             }
         }
     }
 
-    // ==========================================
-    // 5. NAVEGAÇÃO AUTÔNOMA (BFS)
-    // ==========================================
     public void fazerEntregaAleatoria() {
         List<No> destinosValidos = new ArrayList<>();
         for (int l = 0; l < LINHAS; l++) {
             for (int c = 0; c < COLUNAS; c++) {
-                if (!gradeNos[l][c].ehObstaculo && gradeNos[l][c] != noAtualDrone) {
+                TipoLocal tipo = gradeNos[l][c].tipo;
+                if ((tipo == TipoLocal.FARMACIA || tipo == TipoLocal.HOSPITAL || tipo == TipoLocal.RESIDENCIA) && gradeNos[l][c] != noAtualDrone) {
                     destinosValidos.add(gradeNos[l][c]);
                 }
             }
         }
 
-        if (destinosValidos.isEmpty()) return;
+        if (destinosValidos.isEmpty()) {
+            statusMessage = "Não há destinos válidos disponíveis no momento.";
+            repaint();
+            return;
+        }
+
         No destino = destinosValidos.get(random.nextInt(destinosValidos.size()));
         encontrarRota(noAtualDrone, destino);
-        requestFocusInWindow(); // Mantém o foco para o teclado funcionar depois
+        requestFocusInWindow();
     }
 
     private void encontrarRota(No inicio, No fim) {
@@ -194,7 +203,7 @@ public class SimuladorDroneGrid extends JPanel {
             if (atual == fim) {
                 currentPath = caminho;
                 pathIndex = 0;
-                statusMessage = "Piloto Automático: Rota encontrada para [" + fim.linha + "," + fim.coluna + "]";
+                statusMessage = "Enviando para " + fim.tipo + " na posição [" + fim.linha + "," + fim.coluna + "]";
                 timer.start();
                 repaint();
                 return;
@@ -209,7 +218,7 @@ public class SimuladorDroneGrid extends JPanel {
                 }
             }
         }
-        statusMessage = "Erro: O destino [" + fim.linha + "," + fim.coluna + "] está isolado!";
+        statusMessage = "Erro: " + fim.tipo + " [" + fim.linha + "," + fim.coluna + "] está isolada!";
         repaint();
     }
 
@@ -229,12 +238,12 @@ public class SimuladorDroneGrid extends JPanel {
         double dx = targetX - droneX;
         double dy = targetY - droneY;
         double distance = Math.sqrt(dx * dx + dy * dy);
-        double speed = 4.0; // Velocidade do drone
+        double speed = 4.0;
 
         if (distance <= speed) {
             droneX = targetX;
             droneY = targetY;
-            noAtualDrone = targetNode; // Atualiza o nó oficial
+            noAtualDrone = targetNode;
             pathIndex++;
         } else {
             droneX += (dx / distance) * speed;
@@ -243,38 +252,49 @@ public class SimuladorDroneGrid extends JPanel {
         repaint();
     }
 
-    // ==========================================
-    // 6. RENDERIZAÇÃO
-    // ==========================================
     @Override
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
         Graphics2D g2d = (Graphics2D) g;
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-        // Fundo
         g2d.setColor(new Color(40, 44, 52));
         g2d.fillRect(0, 0, getWidth(), getHeight());
 
-        // Desenha a Grade
         for (int l = 0; l < LINHAS; l++) {
             for (int c = 0; c < COLUNAS; c++) {
                 int x = c * TAMANHO_CELULA;
                 int y = l * TAMANHO_CELULA;
+                No no = gradeNos[l][c];
 
-                if (gradeNos[l][c].ehObstaculo) {
-                    g2d.setColor(new Color(46, 117, 89)); // Bloco
+                if (no.tipo == TipoLocal.OBSTACULO) {
+                    g2d.setColor(new Color(46, 117, 89));
                     g2d.fillRect(x, y, TAMANHO_CELULA, TAMANHO_CELULA);
+                } else if (no.tipo == TipoLocal.BASE) {
+                    g2d.setColor(new Color(100, 149, 237)); // Azul
+                    g2d.fillRect(x, y, TAMANHO_CELULA, TAMANHO_CELULA);
+                    desenharLetra(g2d, "B", x, y, Color.WHITE);
+                } else if (no.tipo == TipoLocal.FARMACIA) {
+                    g2d.setColor(new Color(60, 179, 113)); // Verde
+                    g2d.fillRect(x, y, TAMANHO_CELULA, TAMANHO_CELULA);
+                    desenharLetra(g2d, "F", x, y, Color.WHITE);
+                } else if (no.tipo == TipoLocal.HOSPITAL) {
+                    g2d.setColor(new Color(220, 20, 60)); // Vermelho
+                    g2d.fillRect(x, y, TAMANHO_CELULA, TAMANHO_CELULA);
+                    desenharLetra(g2d, "H", x, y, Color.WHITE);
+                } else if (no.tipo == TipoLocal.RESIDENCIA) {
+                    g2d.setColor(new Color(218, 165, 32)); // Dourado
+                    g2d.fillRect(x, y, TAMANHO_CELULA, TAMANHO_CELULA);
+                    desenharLetra(g2d, "R", x, y, Color.BLACK);
                 } else {
-                    g2d.setColor(new Color(60, 64, 72)); // Linhas guia
+                    g2d.setColor(new Color(60, 64, 72));
                     g2d.drawRect(x, y, TAMANHO_CELULA, TAMANHO_CELULA);
                 }
             }
         }
 
-        // Desenha a Linha da Rota Automática (opcional, fica visualmente legal)
         if (currentPath != null) {
-            g2d.setColor(new Color(255, 215, 0, 150)); // Amarelo translúcido
+            g2d.setColor(new Color(255, 215, 0, 150));
             g2d.setStroke(new BasicStroke(4));
             for (int i = 0; i < currentPath.size() - 1; i++) {
                 No n1 = currentPath.get(i);
@@ -287,18 +307,25 @@ public class SimuladorDroneGrid extends JPanel {
             g2d.setStroke(new BasicStroke(1));
         }
 
-        // Desenha o Drone (usando coordenadas decimais para animação fluida)
         g2d.setColor(new Color(0, 150, 255));
         g2d.fillOval((int) droneX + (TAMANHO_CELULA / 4), 
                      (int) droneY + (TAMANHO_CELULA / 4), 
                      TAMANHO_CELULA / 2, TAMANHO_CELULA / 2);
 
-        // Minimapa e Status
         desenharMinimapa(g2d);
         
         g2d.setColor(Color.WHITE);
         g2d.setFont(new Font("Arial", Font.BOLD, 14));
         g2d.drawString("Status: " + statusMessage, 20, ALTURA_MUNDO - 15);
+    }
+
+    private void desenharLetra(Graphics2D g2d, String letra, int x, int y, Color cor) {
+        g2d.setColor(cor);
+        g2d.setFont(new Font("Arial", Font.BOLD, 20));
+        FontMetrics fm = g2d.getFontMetrics();
+        int textX = x + (TAMANHO_CELULA - fm.stringWidth(letra)) / 2;
+        int textY = y + ((TAMANHO_CELULA - fm.getHeight()) / 2) + fm.getAscent();
+        g2d.drawString(letra, textX, textY);
     }
 
     private void desenharMinimapa(Graphics2D g) {
@@ -312,19 +339,32 @@ public class SimuladorDroneGrid extends JPanel {
 
         for (int l = 0; l < LINHAS; l++) {
             for (int c = 0; c < COLUNAS; c++) {
-                if (gradeNos[l][c].ehObstaculo) {
-                    int miniObsX = MINI_X + (int) ((c * TAMANHO_CELULA) * escalaX);
-                    int miniObsY = MINI_Y + (int) ((l * TAMANHO_CELULA) * escalaY);
-                    int miniObsL = (int) (TAMANHO_CELULA * escalaX) + 1;
-                    int miniObsA = (int) (TAMANHO_CELULA * escalaY) + 1;
+                No no = gradeNos[l][c];
+                
+                int miniX = MINI_X + (int) ((c * TAMANHO_CELULA) * escalaX);
+                int miniY = MINI_Y + (int) ((l * TAMANHO_CELULA) * escalaY);
+                int miniL = (int) (TAMANHO_CELULA * escalaX) + 1;
+                int miniA = (int) (TAMANHO_CELULA * escalaY) + 1;
 
+                if (no.tipo == TipoLocal.OBSTACULO) {
                     g.setColor(new Color(200, 50, 50, 180));
-                    g.fillRect(miniObsX, miniObsY, miniObsL, miniObsA);
+                    g.fillRect(miniX, miniY, miniL, miniA);
+                } else if (no.tipo == TipoLocal.BASE) {
+                    g.setColor(Color.BLUE);
+                    g.fillRect(miniX, miniY, miniL, miniA);
+                } else if (no.tipo == TipoLocal.FARMACIA) {
+                    g.setColor(Color.GREEN);
+                    g.fillRect(miniX, miniY, miniL, miniA);
+                } else if (no.tipo == TipoLocal.HOSPITAL) {
+                    g.setColor(Color.RED);
+                    g.fillRect(miniX, miniY, miniL, miniA);
+                } else if (no.tipo == TipoLocal.RESIDENCIA) {
+                    g.setColor(Color.YELLOW);
+                    g.fillRect(miniX, miniY, miniL, miniA);
                 }
             }
         }
 
-        // Drone no radar refletindo a animação (droneX e droneY atualizados no timer)
         int miniDroneX = MINI_X + (int) ((droneX + TAMANHO_CELULA/2) * escalaX);
         int miniDroneY = MINI_Y + (int) ((droneY + TAMANHO_CELULA/2) * escalaY);
 
@@ -332,12 +372,9 @@ public class SimuladorDroneGrid extends JPanel {
         g.fillOval(miniDroneX - 4, miniDroneY - 4, 8, 8);
     }
 
-    // ==========================================
-    // 7. MAIN E INTEGRAÇÃO DOS BOTÕES
-    // ==========================================
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
-            JFrame frame = new JFrame("Simulador Híbrido: Grade, Minimapa e Automação");
+            JFrame frame = new JFrame("Simulador de Entregas: Farmácia, Hospital e Residência");
             frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
             frame.setLayout(new BorderLayout());
 
@@ -345,7 +382,6 @@ public class SimuladorDroneGrid extends JPanel {
             canvas.setPreferredSize(new Dimension(canvas.LARGURA_MUNDO, canvas.ALTURA_MUNDO));
             frame.add(canvas, BorderLayout.CENTER);
 
-            // Painel de Botões inferior
             JPanel panel = new JPanel();
             panel.setBackground(Color.DARK_GRAY);
             
@@ -366,7 +402,6 @@ public class SimuladorDroneGrid extends JPanel {
             frame.setLocationRelativeTo(null);
             frame.setVisible(true);
             
-            // Foca no canvas para garantir que as setas do teclado funcionem de primeira
             canvas.requestFocusInWindow();
         });
     }
