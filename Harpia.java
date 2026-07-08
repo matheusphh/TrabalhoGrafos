@@ -32,6 +32,7 @@ public class SimuladorDroneGrid extends JPanel {
         int linha, coluna;
         TipoLocal tipo;
         List<No> vizinhos = new ArrayList<>();
+        boolean entregue = false;
 
         No(int linha, int coluna, TipoLocal tipo) {
             this.linha = linha;
@@ -50,6 +51,9 @@ public class SimuladorDroneGrid extends JPanel {
     private String statusMessage = "Modo Livre: Use as setas ou clique em uma ação.";
     private Random random = new Random();
 
+    private List<No> entregasPendentes = new ArrayList<>();
+    private No destinoAtual = null;
+
     public SimuladorDroneGrid() {
         setFocusable(true);
         
@@ -59,9 +63,11 @@ public class SimuladorDroneGrid extends JPanel {
         addKeyListener(new KeyAdapter() {
             @Override
             public void keyPressed(KeyEvent e) {
-                if (currentPath != null) {
+                if (currentPath != null || !entregasPendentes.isEmpty()) {
                     timer.stop();
                     currentPath = null;
+                    entregasPendentes.clear();
+                    destinoAtual = null;
                     statusMessage = "Piloto Automático desligado. Controle manual.";
                 }
 
@@ -92,6 +98,8 @@ public class SimuladorDroneGrid extends JPanel {
     public void gerarMapaAleatorio() {
         if (timer != null) timer.stop();
         currentPath = null;
+        entregasPendentes.clear();
+        destinoAtual = null;
 
         for (int l = 0; l < LINHAS; l++) {
             for (int c = 0; c < COLUNAS; c++) {
@@ -101,6 +109,7 @@ public class SimuladorDroneGrid extends JPanel {
         }
         
         gradeNos[0][0].tipo = TipoLocal.BASE;
+        gradeNos[0][0].entregue = false;
 
         espalharPontosDeInteresse(TipoLocal.FARMACIA, 3);
         espalharPontosDeInteresse(TipoLocal.HOSPITAL, 2);
@@ -123,14 +132,14 @@ public class SimuladorDroneGrid extends JPanel {
             
             if (gradeNos[l][c].tipo == TipoLocal.VAZIO) {
                 gradeNos[l][c].tipo = tipo;
+                gradeNos[l][c].entregue = false;
                 adicionados++;
             }
         }
     }
 
     public void aleatorizarClima() {
-        if (timer != null) timer.stop();
-        currentPath = null;
+        if (timer != null && currentPath == null) timer.stop();
 
         for (int l = 0; l < LINHAS; l++) {
             for (int c = 0; c < COLUNAS; c++) {
@@ -144,9 +153,11 @@ public class SimuladorDroneGrid extends JPanel {
         }
         atualizarArestas();
         
-        droneX = noAtualDrone.coluna * TAMANHO_CELULA;
-        droneY = noAtualDrone.linha * TAMANHO_CELULA;
-        statusMessage = "O clima mudou! Novos obstáculos surgiram.";
+        if (currentPath == null) {
+            droneX = noAtualDrone.coluna * TAMANHO_CELULA;
+            droneY = noAtualDrone.linha * TAMANHO_CELULA;
+            statusMessage = "O clima mudou! Novos obstáculos surgiram.";
+        }
         repaint();
     }
 
@@ -165,26 +176,52 @@ public class SimuladorDroneGrid extends JPanel {
         }
     }
 
-    public void fazerEntregaAleatoria() {
-        List<No> destinosValidos = new ArrayList<>();
+    public void fazerTodasAsEntregas() {
+        entregasPendentes.clear();
         for (int l = 0; l < LINHAS; l++) {
             for (int c = 0; c < COLUNAS; c++) {
                 TipoLocal tipo = gradeNos[l][c].tipo;
-                if ((tipo == TipoLocal.FARMACIA || tipo == TipoLocal.HOSPITAL || tipo == TipoLocal.RESIDENCIA) && gradeNos[l][c] != noAtualDrone) {
-                    destinosValidos.add(gradeNos[l][c]);
+                if ((tipo == TipoLocal.FARMACIA || tipo == TipoLocal.HOSPITAL || tipo == TipoLocal.RESIDENCIA) && !gradeNos[l][c].entregue) {
+                    entregasPendentes.add(gradeNos[l][c]);
                 }
             }
         }
 
-        if (destinosValidos.isEmpty()) {
-            statusMessage = "Não há destinos válidos disponíveis no momento.";
+        if (entregasPendentes.isEmpty()) {
+            statusMessage = "Todos os locais já receberam entregas!";
             repaint();
             return;
         }
 
-        No destino = destinosValidos.get(random.nextInt(destinosValidos.size()));
-        encontrarRota(noAtualDrone, destino);
+        iniciarProximaEntrega();
         requestFocusInWindow();
+    }
+
+    private void iniciarProximaEntrega() {
+        if (entregasPendentes.isEmpty()) {
+            currentPath = null;
+            destinoAtual = null;
+            statusMessage = "Todas as entregas foram concluídas com sucesso!";
+            timer.stop();
+            repaint();
+            return;
+        }
+
+        No destinoMaisProximo = null;
+        double menorDistancia = Double.MAX_VALUE;
+
+        for (No pendente : entregasPendentes) {
+            double dist = Math.hypot(pendente.linha - noAtualDrone.linha, pendente.coluna - noAtualDrone.coluna);
+            if (dist < menorDistancia) {
+                menorDistancia = dist;
+                destinoMaisProximo = pendente;
+            }
+        }
+
+        if (destinoMaisProximo != null) {
+            destinoAtual = destinoMaisProximo;
+            encontrarRota(noAtualDrone, destinoAtual);
+        }
     }
 
     private void encontrarRota(No inicio, No fim) {
@@ -203,7 +240,7 @@ public class SimuladorDroneGrid extends JPanel {
             if (atual == fim) {
                 currentPath = caminho;
                 pathIndex = 0;
-                statusMessage = "Enviando para " + fim.tipo + " na posição [" + fim.linha + "," + fim.coluna + "]";
+                statusMessage = "Faltam " + entregasPendentes.size() + " locais. Rumo à " + fim.tipo + ".";
                 timer.start();
                 repaint();
                 return;
@@ -218,16 +255,18 @@ public class SimuladorDroneGrid extends JPanel {
                 }
             }
         }
-        statusMessage = "Erro: " + fim.tipo + " [" + fim.linha + "," + fim.coluna + "] está isolada!";
-        repaint();
+        
+        entregasPendentes.remove(fim);
+        iniciarProximaEntrega();
     }
 
     private void animateDrone() {
         if (currentPath == null || pathIndex >= currentPath.size() - 1) {
-            timer.stop();
-            currentPath = null;
-            statusMessage = "Entrega concluída! Modo livre ativado.";
-            repaint();
+            if (destinoAtual != null) {
+                destinoAtual.entregue = true;
+                entregasPendentes.remove(destinoAtual);
+            }
+            iniciarProximaEntrega();
             return;
         }
 
@@ -270,20 +309,24 @@ public class SimuladorDroneGrid extends JPanel {
                 if (no.tipo == TipoLocal.OBSTACULO) {
                     g2d.setColor(new Color(46, 117, 89));
                     g2d.fillRect(x, y, TAMANHO_CELULA, TAMANHO_CELULA);
+                } else if (no.entregue) {
+                    g2d.setColor(new Color(105, 105, 105)); 
+                    g2d.fillRect(x, y, TAMANHO_CELULA, TAMANHO_CELULA);
+                    desenharLetra(g2d, "✓", x, y, Color.GREEN);
                 } else if (no.tipo == TipoLocal.BASE) {
-                    g2d.setColor(new Color(100, 149, 237)); // Azul
+                    g2d.setColor(new Color(100, 149, 237));
                     g2d.fillRect(x, y, TAMANHO_CELULA, TAMANHO_CELULA);
                     desenharLetra(g2d, "B", x, y, Color.WHITE);
                 } else if (no.tipo == TipoLocal.FARMACIA) {
-                    g2d.setColor(new Color(60, 179, 113)); // Verde
+                    g2d.setColor(new Color(60, 179, 113));
                     g2d.fillRect(x, y, TAMANHO_CELULA, TAMANHO_CELULA);
                     desenharLetra(g2d, "F", x, y, Color.WHITE);
                 } else if (no.tipo == TipoLocal.HOSPITAL) {
-                    g2d.setColor(new Color(220, 20, 60)); // Vermelho
+                    g2d.setColor(new Color(220, 20, 60));
                     g2d.fillRect(x, y, TAMANHO_CELULA, TAMANHO_CELULA);
                     desenharLetra(g2d, "H", x, y, Color.WHITE);
                 } else if (no.tipo == TipoLocal.RESIDENCIA) {
-                    g2d.setColor(new Color(218, 165, 32)); // Dourado
+                    g2d.setColor(new Color(218, 165, 32));
                     g2d.fillRect(x, y, TAMANHO_CELULA, TAMANHO_CELULA);
                     desenharLetra(g2d, "R", x, y, Color.BLACK);
                 } else {
@@ -349,6 +392,9 @@ public class SimuladorDroneGrid extends JPanel {
                 if (no.tipo == TipoLocal.OBSTACULO) {
                     g.setColor(new Color(200, 50, 50, 180));
                     g.fillRect(miniX, miniY, miniL, miniA);
+                } else if (no.entregue) {
+                    g.setColor(Color.DARK_GRAY);
+                    g.fillRect(miniX, miniY, miniL, miniA);
                 } else if (no.tipo == TipoLocal.BASE) {
                     g.setColor(Color.BLUE);
                     g.fillRect(miniX, miniY, miniL, miniA);
@@ -374,7 +420,7 @@ public class SimuladorDroneGrid extends JPanel {
 
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
-            JFrame frame = new JFrame("Simulador de Entregas: Farmácia, Hospital e Residência");
+            JFrame frame = new JFrame("Simulador de Entregas: Rota Completa");
             frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
             frame.setLayout(new BorderLayout());
 
@@ -387,11 +433,11 @@ public class SimuladorDroneGrid extends JPanel {
             
             JButton btnGerarMapa = new JButton("Gerar Novo Mapa");
             JButton btnClima = new JButton("Mudar Clima (Obstáculos)");
-            JButton btnEntrega = new JButton("Fazer Entrega Aleatória");
+            JButton btnEntrega = new JButton("Fazer Todas as Entregas");
 
             btnGerarMapa.addActionListener(e -> canvas.gerarMapaAleatorio());
             btnClima.addActionListener(e -> canvas.aleatorizarClima());
-            btnEntrega.addActionListener(e -> canvas.fazerEntregaAleatoria());
+            btnEntrega.addActionListener(e -> canvas.fazerTodasAsEntregas());
 
             panel.add(btnGerarMapa);
             panel.add(btnClima);
