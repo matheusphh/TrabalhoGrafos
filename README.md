@@ -11,7 +11,7 @@ O sistema é uma simulação visual interativa desenvolvida em Java (Swing) que 
 
 ## Capturas de Tela
 
-<img src="screenshot/img.png" width="200"/> 
+<img src="screenshot/img.png"/> 
 
 ## Algoritmos Implementados
 
