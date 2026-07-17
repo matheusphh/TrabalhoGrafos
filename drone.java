@@ -6,9 +6,8 @@ import java.util.List;
 
 public class SimuladorDroneGUI extends JPanel {
 
-    // ==========================================
-    // 1. MODELAGEM (Vértices, Arestas, Pesos)
-    // ==========================================
+    // Modelagem
+
     enum TipoLocal {
         BASE, HOSPITAL, ESCOLA, COMUNIDADE
     }
@@ -53,9 +52,8 @@ public class SimuladorDroneGUI extends JPanel {
         }
     }
 
-    // ==========================================
-    // 2. ESTADO DO SIMULADOR
-    // ==========================================
+    // Estado do simulador
+
     private Map<Location, List<Route>> graph = new HashMap<>();
     private List<Location> bases = new ArrayList<>();
     private List<Location> allLocations = new ArrayList<>();
@@ -83,9 +81,8 @@ public class SimuladorDroneGUI extends JPanel {
         gerarMapaAleatorio();
     }
 
-    // ==========================================
-    // 3. GERADOR DE GRAFO (Baseado em Melhor Rota)
-    // ==========================================
+    // Gerador de grafo
+
     public void gerarMapaAleatorio() {
         graph.clear();
         allLocations.clear();
@@ -179,14 +176,14 @@ public class SimuladorDroneGUI extends JPanel {
         calcularMST(); 
 
         resetDrone();
-        statusMessage = "Mapa inteligente gerado com 2 Bases de Distribuição!";
+        statusMessage = "Mapa gerado!";
         repaint();
     }
 
     public void aleatorizarClima() {
         bloquearUmaUnicaRota();
         calcularMST(); 
-        statusMessage = "Clima alterado! Nova rota bloqueada.";
+        statusMessage = "Caminho alterado! Nova rota bloqueada.";
         repaint();
     }
     
@@ -242,9 +239,7 @@ public class SimuladorDroneGUI extends JPanel {
         return false;
     }
 
-    // ==========================================
-    // 4. ALGORITMOS (A*, MST, TSP)
-    // ==========================================
+    // 4. Algoritmos (A*, MST e TSP)
     
     private void calcularMST() {
         mstEdges.clear();
@@ -385,7 +380,7 @@ public class SimuladorDroneGUI extends JPanel {
         entregasPendentes = rotaOtimizada;
     }
 
-    // --- NOVA LÓGICA DE SEGURANÇA E BATERIA BLINDADA ---
+    // LOGICA DE SEGURANÇA E BATERIA
     private void iniciarProximaEntrega(Location pontoAtual) {
         if (pontoAtual.tipo == TipoLocal.BASE && indoRecarregar) {
             bateriaAtual = bateriaMaxima;
@@ -453,7 +448,7 @@ public class SimuladorDroneGUI extends JPanel {
             }
         }
 
-        // MARGEM DE SEGURANÇA: Exige 20% a mais de bateria do que o necessário
+        // MARGEM DE SEGURANÇA
         double margemSeguranca = 1.2;
 
         // Se for impossível voltar de lá (custo == MAX) ou bateria não der conta
@@ -463,7 +458,7 @@ public class SimuladorDroneGUI extends JPanel {
                 entregasPendentes.remove(0);
                 iniciarProximaEntrega(pontoAtual);
             } else {
-                // Aborta e foge para a base acessível mais barata
+                // Aborta e volta para a base acessível mais barata
                 double menorCustoBase = Double.MAX_VALUE;
                 List<Location> melhorCaminhoBase = null;
                 Location melhorBase = null;
@@ -623,9 +618,8 @@ public class SimuladorDroneGUI extends JPanel {
         repaint();
     }
 
-    // ==========================================
-    // 5. RENDERIZAÇÃO GRÁFICA
-    // ==========================================
+    // Renderização
+
     @Override
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
@@ -782,12 +776,10 @@ public class SimuladorDroneGUI extends JPanel {
         g2d.drawRect(90, 43, 100, 12);
     }
 
-    // ==========================================
-    // 6. INICIALIZAÇÃO
-    // ==========================================
+    // Main
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
-            JFrame frame = new JFrame("Simulador de Drone: Múltiplas Bases (Segurança Otimizada)");
+            JFrame frame = new JFrame("Simulador de Drone");
             frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
             frame.setSize(850, 600);
             frame.setLayout(new BorderLayout());
@@ -799,7 +791,7 @@ public class SimuladorDroneGUI extends JPanel {
             panel.setBackground(Color.WHITE);
             
             JButton btnGerarMapa = new JButton("Gerar Novo Mapa");
-            JButton btnClima = new JButton("Mudar Clima (Obstáculo)");
+            JButton btnClima = new JButton("Mudar Obstáculos");
             JButton btnMST = new JButton("Exibir Rede MST");
             JButton btnTodasEntregas = new JButton("Fazer Todas as Entregas");
 
