@@ -1,5 +1,6 @@
 import javax.swing.*;
 import java.awt.*;
+import java.awt.geom.AffineTransform;
 import java.util.*;
 import java.util.List;
 
@@ -16,6 +17,19 @@ public class SimuladorDroneGUI extends JPanel {
             this.name = name;
             this.x = x;
             this.y = y;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (this == obj) return true;
+            if (obj == null || getClass() != obj.getClass()) return false;
+            Location loc = (Location) obj;
+            return name.equals(loc.name); 
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(name);
         }
     }
 
@@ -38,24 +52,27 @@ public class SimuladorDroneGUI extends JPanel {
     private Random random = new Random();
     
     private double droneX, droneY;
+    private double droneAngle = 0.0; 
     private List<Location> currentPath = null;
     private int pathIndex = 0;
     private javax.swing.Timer timer;
     private String statusMessage = "Clique em 'Gerar Novo Mapa' para começar.";
 
-    // Variáveis de controle para entregas múltiplas
     private List<Location> entregasPendentes = new ArrayList<>();
+    private Set<Location> entregasConcluidas = new HashSet<>();
     private boolean modoEntregasMultiplas = false;
+    private boolean indoRecarregar = false;
+    
+    private double bateriaMaxima = 1500.0; 
+    private double bateriaAtual = bateriaMaxima;
 
     public SimuladorDroneGUI() {
-        // Inicializa o Timer de animação
         timer = new javax.swing.Timer(16, e -> animateDrone());
-        // Gera o mapa inicial
         gerarMapaAleatorio();
     }
 
     // ==========================================
-    // 3. GERADOR DE GRAFO ALEATÓRIO
+    // 3. GERADOR DE GRAFO (Estilo Cidade / Grid)
     // ==========================================
     public void gerarMapaAleatorio() {
         graph.clear();
@@ -63,62 +80,91 @@ public class SimuladorDroneGUI extends JPanel {
         timer.stop();
 
         int width = 750;
-        int height = 450;
+        int height = 550; 
+        int tamanhoQuarteirao = 100; 
 
-        // 1. Cria a Base
-        base = new Location("Base", 50, height / 2);
+        base = new Location("Base", 50, 300);
         allLocations.add(base);
         graph.put(base, new ArrayList<>());
 
-        // 2. Cria Nós Aleatórios (entre 5 e 10 nós)
-        int numNodes = 5 + random.nextInt(6);
-        for (int i = 1; i < numNodes; i++) {
-            Location loc = new Location("Local " + i, 150 + random.nextInt(width - 200), 50 + random.nextInt(height - 100));
+        List<Point> cruzamentos = new ArrayList<>();
+        for (int x = 150; x <= width - 50; x += tamanhoQuarteirao) {
+            for (int y = 100; y <= height - 50; y += tamanhoQuarteirao) {
+                cruzamentos.add(new Point(x, y));
+            }
+        }
+
+        Collections.shuffle(cruzamentos, random);
+
+        int numNodes = 6 + random.nextInt(7);
+        for (int i = 1; i < numNodes && i <= cruzamentos.size(); i++) {
+            Point p = cruzamentos.get(i - 1);
+            Location loc = new Location("Local " + i, p.x, p.y);
             allLocations.add(loc);
             graph.put(loc, new ArrayList<>());
         }
 
-        // 3. Conecta os nós garantindo que não haja "ilhas" isoladas
         for (int i = 1; i < numNodes; i++) {
             Location current = allLocations.get(i);
             Location connectTo = allLocations.get(random.nextInt(i));
-            boolean hasObstacle = random.nextDouble() > 0.8; // 20% de chance de bloqueio inicial
-            addBidirectionalRoute(current, connectTo, hasObstacle);
+            addBidirectionalRoute(current, connectTo, false);
         }
 
-        // 4. Adiciona algumas arestas extras para criar caminhos alternativos
         for (int i = 0; i < numNodes; i++) {
             Location a = allLocations.get(random.nextInt(numNodes));
             Location b = allLocations.get(random.nextInt(numNodes));
             if (a != b && !routeExists(a, b)) {
-                boolean hasObstacle = random.nextDouble() > 0.8;
-                addBidirectionalRoute(a, b, hasObstacle);
+                if (calcularDistancia(a, b) <= tamanhoQuarteirao * 2.5) {
+                    addBidirectionalRoute(a, b, false);
+                }
             }
         }
 
+        bloquearUmaUnicaRota();
+
         resetDrone();
-        statusMessage = "Novo mapa com " + numNodes + " vértices gerado!";
+        statusMessage = "Mapa da cidade gerado com " + numNodes + " locais!";
         repaint();
     }
 
     public void aleatorizarClima() {
-        for (List<Route> routes : graph.values()) {
-            for (Route r : routes) {
-                // Sincroniza a ida e volta (grafo não direcionado)
-                boolean novoEstado = random.nextDouble() > 0.7; // 30% de chance de estar bloqueado
-                r.isBlocked = novoEstado;
+        bloquearUmaUnicaRota();
+        statusMessage = "Clima alterado! Uma única rota bloqueada.";
+        repaint();
+    }
+
+    private void bloquearUmaUnicaRota() {
+        List<Location[]> todasAsArestas = new ArrayList<>();
+        Set<String> vistas = new HashSet<>();
+
+        for (Map.Entry<Location, List<Route>> entry : graph.entrySet()) {
+            Location a = entry.getKey();
+            for (Route r : entry.getValue()) {
+                r.isBlocked = false; 
                 
-                // Atualiza a aresta de volta
-                for (Route backRoute : graph.get(r.destination)) {
-                    if (backRoute.destination == findLocationByRoute(routes)) {
-                        backRoute.isBlocked = novoEstado;
-                    }
+                Location b = r.destination;
+                String id1 = a.name + "-" + b.name;
+                String id2 = b.name + "-" + a.name;
+                
+                if (!vistas.contains(id1) && !vistas.contains(id2)) {
+                    todasAsArestas.add(new Location[]{a, b});
+                    vistas.add(id1);
                 }
             }
         }
-        statusMessage = "Clima alterado! Rotas bloqueadas atualizadas.";
-        resetDrone();
-        repaint();
+
+        if (!todasAsArestas.isEmpty()) {
+            Location[] escolhida = todasAsArestas.get(random.nextInt(todasAsArestas.size()));
+            Location a = escolhida[0];
+            Location b = escolhida[1];
+
+            for (Route r : graph.get(a)) {
+                if (r.destination.equals(b)) r.isBlocked = true;
+            }
+            for (Route r : graph.get(b)) {
+                if (r.destination.equals(a)) r.isBlocked = true;
+            }
+        }
     }
 
     private void addBidirectionalRoute(Location a, Location b, boolean isBlocked) {
@@ -128,28 +174,19 @@ public class SimuladorDroneGUI extends JPanel {
 
     private boolean routeExists(Location a, Location b) {
         for (Route r : graph.get(a)) {
-            if (r.destination == b) return true;
+            if (r.destination.equals(b)) return true;
         }
         return false;
     }
 
-    private Location findLocationByRoute(List<Route> routes) {
-        for (Map.Entry<Location, List<Route>> entry : graph.entrySet()) {
-            if (entry.getValue() == routes) return entry.getKey();
-        }
-        return null;
-    }
-
     // ==========================================
-    // 4. ALGORITMO A* E NAVEGAÇÃO EM FILA
+    // 4. ALGORITMO A* E CAIXEIRO VIAJANTE (TSP)
     // ==========================================
-    
-    // Classe auxiliar para o algoritmo A*
     private class AStarNode implements Comparable<AStarNode> {
         Location location;
         List<Location> path;
-        double g; // Custo do caminho até agora (distância percorrida)
-        double f; // f = g + h (custo total estimado)
+        double g; 
+        double f; 
 
         public AStarNode(Location location, List<Location> path, double g, double f) {
             this.location = location;
@@ -167,36 +204,140 @@ public class SimuladorDroneGUI extends JPanel {
     public void fazerTodasEntregas() {
         if (allLocations.size() <= 1) return;
         
-        // Copia todos os locais (menos a base) para a fila
-        entregasPendentes = new ArrayList<>(allLocations);
-        entregasPendentes.remove(base);
+        if (modoEntregasMultiplas) {
+            statusMessage = "Entregas já estão em andamento!";
+            repaint();
+            return;
+        }
+        
+        entregasPendentes.clear();
+        for (Location loc : allLocations) {
+            if (!loc.equals(base) && !entregasConcluidas.contains(loc)) {
+                entregasPendentes.add(loc);
+            }
+        }
+        
+        if (entregasPendentes.isEmpty()) {
+            statusMessage = "Todas as entregas acessíveis já estão prontas!";
+            repaint();
+            return;
+        }
+        
         modoEntregasMultiplas = true;
         
-        // O drone parte da base para a primeira entrega
-        iniciarProximaEntrega(base);
+        Location partida = base;
+        for (Location loc : allLocations) {
+            if (Math.abs(droneX - loc.x) < 1 && Math.abs(droneY - loc.y) < 1) {
+                partida = loc;
+                break;
+            }
+        }
+        
+        otimizarFilaTSP(partida);
+        iniciarProximaEntrega(partida);
+    }
+
+    private void otimizarFilaTSP(Location pontoDePartida) {
+        if (entregasPendentes.isEmpty()) return;
+
+        List<Location> rotaOtimizada = new ArrayList<>();
+        Location pontoAtualTSP = pontoDePartida;
+
+        while (!entregasPendentes.isEmpty()) {
+            Location vizinhoMaisProximo = null;
+            double menorDistancia = Double.MAX_VALUE;
+
+            for (Location candidato : entregasPendentes) {
+                double dist = calcularDistancia(pontoAtualTSP, candidato);
+                if (dist < menorDistancia) {
+                    menorDistancia = dist;
+                    vizinhoMaisProximo = candidato;
+                }
+            }
+
+            if (vizinhoMaisProximo != null) {
+                rotaOtimizada.add(vizinhoMaisProximo);
+                entregasPendentes.remove(vizinhoMaisProximo);
+                pontoAtualTSP = vizinhoMaisProximo; 
+            }
+        }
+        entregasPendentes = rotaOtimizada;
     }
 
     private void iniciarProximaEntrega(Location pontoAtual) {
+        if (pontoAtual.equals(base) && indoRecarregar) {
+            bateriaAtual = bateriaMaxima;
+            indoRecarregar = false;
+        }
+
         if (entregasPendentes.isEmpty()) {
-            statusMessage = "Missão cumprida: Todas as entregas acessíveis foram feitas!";
+            if (!pontoAtual.equals(base)) {
+                List<Location> caminhoBase = findRoute(pontoAtual, base);
+                if (caminhoBase != null) {
+                    currentPath = caminhoBase;
+                    pathIndex = 0;
+                    droneX = pontoAtual.x;
+                    droneY = pontoAtual.y;
+                    statusMessage = "Fim das entregas. Retornando à base.";
+                    timer.start();
+                } else {
+                    statusMessage = "Fim. Drone isolado da base!";
+                }
+            } else {
+                statusMessage = "Todas as entregas feitas! Drone na base.";
+                bateriaAtual = bateriaMaxima; 
+            }
             modoEntregasMultiplas = false;
             repaint();
             return;
         }
 
-        // Pega o próximo destino da fila
-        Location proximoDestino = entregasPendentes.remove(0);
+        Location proximoDestino = entregasPendentes.get(0);
+        List<Location> caminhoIda = findRoute(pontoAtual, proximoDestino);
         
-        // Tenta achar a rota usando o A*
-        boolean sucesso = findAndStartRoute(pontoAtual, proximoDestino);
-        
-        // Se falhou (isolado pelos obstáculos), pula para o próximo da fila
-        if (!sucesso) {
+        if (caminhoIda == null) {
+            entregasPendentes.remove(0);
             iniciarProximaEntrega(pontoAtual);
+            return;
         }
+
+        double custoIda = calcularCustoCaminho(caminhoIda);
+        List<Location> caminhoVolta = findRoute(proximoDestino, base);
+        double custoVolta = (caminhoVolta != null) ? calcularCustoCaminho(caminhoVolta) : 0;
+
+        if (bateriaAtual < (custoIda + custoVolta)) {
+            if (pontoAtual.equals(base)) {
+                statusMessage = "Pular: " + proximoDestino.name + " está muito longe!";
+                entregasPendentes.remove(0);
+                iniciarProximaEntrega(pontoAtual);
+            } else {
+                List<Location> caminhoBase = findRoute(pontoAtual, base);
+                if (caminhoBase != null) {
+                    currentPath = caminhoBase;
+                    pathIndex = 0;
+                    droneX = pontoAtual.x;
+                    droneY = pontoAtual.y;
+                    indoRecarregar = true;
+                    statusMessage = "Bateria fraca! Retornando para recarregar.";
+                    timer.start();
+                } else {
+                    statusMessage = "Emergência: Bateria fraca e isolado da base!";
+                    modoEntregasMultiplas = false;
+                }
+            }
+        } else {
+            entregasPendentes.remove(0);
+            currentPath = caminhoIda;
+            pathIndex = 0;
+            droneX = pontoAtual.x;
+            droneY = pontoAtual.y;
+            statusMessage = "TSP Otimizado -> Indo para: " + proximoDestino.name;
+            timer.start();
+        }
+        repaint();
     }
 
-    private boolean findAndStartRoute(Location start, Location end) {
+    private List<Location> findRoute(Location start, Location end) {
         PriorityQueue<AStarNode> queue = new PriorityQueue<>();
         Map<Location, Double> minCost = new HashMap<>(); 
 
@@ -209,19 +350,8 @@ public class SimuladorDroneGUI extends JPanel {
         while (!queue.isEmpty()) {
             AStarNode current = queue.poll();
 
-            // Se chegou ao destino
             if (current.location.equals(end)) {
-                currentPath = current.path;
-                pathIndex = 0;
-                
-                // O drone começa a animação a partir do ponto inicial desta rota específica
-                droneX = start.x;
-                droneY = start.y;
-                
-                statusMessage = "Indo para: " + end.name + " (" + entregasPendentes.size() + " restantes)";
-                timer.start();
-                repaint();
-                return true; // Rota encontrada com sucesso
+                return current.path;
             }
 
             for (Route edge : graph.get(current.location)) {
@@ -232,19 +362,23 @@ public class SimuladorDroneGUI extends JPanel {
 
                     if (!minCost.containsKey(neighbor) || newG < minCost.get(neighbor)) {
                         minCost.put(neighbor, newG);
-                        
                         List<Location> newPath = new ArrayList<>(current.path);
                         newPath.add(neighbor);
-                        
                         double h = calcularDistancia(neighbor, end);
                         queue.add(new AStarNode(neighbor, newPath, newG, newG + h));
                     }
                 }
             }
         }
-        
-        // Não encontrou rota (bloqueado pelo clima)
-        return false; 
+        return null;
+    }
+
+    private double calcularCustoCaminho(List<Location> path) {
+        double cost = 0;
+        for (int i = 0; i < path.size() - 1; i++) {
+            cost += calcularDistancia(path.get(i), path.get(i + 1));
+        }
+        return cost;
     }
 
     private double calcularDistancia(Location a, Location b) {
@@ -257,7 +391,11 @@ public class SimuladorDroneGUI extends JPanel {
         timer.stop();
         currentPath = null;
         modoEntregasMultiplas = false;
+        indoRecarregar = false;
+        bateriaAtual = bateriaMaxima;
+        droneAngle = 0.0;
         entregasPendentes.clear();
+        entregasConcluidas.clear(); 
         droneX = base.x;
         droneY = base.y;
     }
@@ -265,13 +403,13 @@ public class SimuladorDroneGUI extends JPanel {
     private void animateDrone() {
         if (currentPath == null || pathIndex >= currentPath.size() - 1) {
             timer.stop();
-            
-            // Se estamos no modo de múltiplas entregas, engatilha a próxima
             if (modoEntregasMultiplas && currentPath != null) {
                 Location localAlcancado = currentPath.get(currentPath.size() - 1);
                 iniciarProximaEntrega(localAlcancado);
             } else {
-                statusMessage = "Navegação parada.";
+                if (!modoEntregasMultiplas && !statusMessage.contains("Fim")) {
+                    statusMessage = "Navegação parada.";
+                }
                 repaint();
             }
             return;
@@ -281,22 +419,34 @@ public class SimuladorDroneGUI extends JPanel {
         double dx = target.x - droneX;
         double dy = target.y - droneY;
         double distance = Math.sqrt(dx * dx + dy * dy);
-
         double speed = 5.0; 
 
+        if (distance > 0) {
+            droneAngle = Math.atan2(dy, dx);
+        }
+
         if (distance <= speed) {
+            bateriaAtual -= distance; 
             droneX = target.x;
             droneY = target.y;
             pathIndex++;
+            
+            if (!target.equals(base) && !entregasConcluidas.contains(target)) {
+                entregasConcluidas.add(target);      
+                entregasPendentes.remove(target);
+            }
         } else {
+            bateriaAtual -= speed;
             droneX += (dx / distance) * speed;
             droneY += (dy / distance) * speed;
         }
+        
+        if (bateriaAtual < 0) bateriaAtual = 0;
         repaint();
     }
 
     // ==========================================
-    // 5. RENDERIZAÇÃO GRÁFICA
+    // 5. RENDERIZAÇÃO GRÁFICA (Asfalto e Caminhos)
     // ==========================================
     @Override
     protected void paintComponent(Graphics g) {
@@ -304,11 +454,27 @@ public class SimuladorDroneGUI extends JPanel {
         Graphics2D g2d = (Graphics2D) g;
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-        // Fundo
-        g2d.setColor(new Color(240, 248, 255)); // Azul clarinho
+        g2d.setColor(new Color(60, 60, 60)); 
         g2d.fillRect(0, 0, getWidth(), getHeight());
 
-        // Desenha Arestas
+        int tamanhoQuarteirao = 100;
+
+        for (int x = 50; x < getWidth() - 50; x += tamanhoQuarteirao) {
+            for (int y = 100; y < getHeight() - 50; y += tamanhoQuarteirao) {
+                g2d.setColor(new Color(200, 200, 200)); 
+                g2d.fillRoundRect(x + 5, y + 5, tamanhoQuarteirao - 10, tamanhoQuarteirao - 10, 15, 15);
+                g2d.setColor(new Color(160, 219, 142)); 
+                g2d.fillRoundRect(x + 10, y + 10, tamanhoQuarteirao - 20, tamanhoQuarteirao - 20, 10, 10);
+                
+                g2d.setColor(new Color(178, 34, 34)); 
+                g2d.fillRect(x + 20, y + 20, 25, 25);
+                g2d.setColor(new Color(112, 128, 144)); 
+                g2d.fillRect(x + 55, y + 50, 25, 30);
+                g2d.setColor(new Color(244, 164, 96)); 
+                g2d.fillRect(x + 55, y + 20, 25, 20);
+            }
+        }
+
         Set<String> drawnEdges = new HashSet<>();
         for (Location loc : graph.keySet()) {
             for (Route route : graph.get(loc)) {
@@ -318,41 +484,105 @@ public class SimuladorDroneGUI extends JPanel {
                 drawnEdges.add(edgeId1);
 
                 if (route.isBlocked) {
-                    g2d.setColor(Color.RED);
-                    float[] dash = {10.0f};
-                    g2d.setStroke(new BasicStroke(2, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10.0f, dash, 0.0f));
+                    g2d.setColor(new Color(255, 69, 0)); 
+                    float[] dash = {15.0f, 10.0f};
+                    g2d.setStroke(new BasicStroke(4, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10.0f, dash, 0.0f));
+                    g2d.drawLine(loc.x, loc.y, route.destination.x, route.destination.y);
                 } else {
-                    g2d.setColor(Color.LIGHT_GRAY);
-                    g2d.setStroke(new BasicStroke(2));
+                    g2d.setColor(new Color(255, 215, 0, 150));
+                    float[] dash = {5.0f, 15.0f};
+                    g2d.setStroke(new BasicStroke(2, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10.0f, dash, 0.0f));
+                    g2d.drawLine(loc.x, loc.y, route.destination.x, route.destination.y);
                 }
-                g2d.drawLine(loc.x, loc.y, route.destination.x, route.destination.y);
             }
         }
 
-        // Desenha Vértices
+        if (currentPath != null && pathIndex < currentPath.size() - 1) {
+            g2d.setColor(Color.CYAN);
+            float[] dashPath = {10.0f, 10.0f};
+            g2d.setStroke(new BasicStroke(4, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 10.0f, dashPath, 0.0f));
+            
+            Location nextNode = currentPath.get(pathIndex + 1);
+            g2d.drawLine((int)droneX, (int)droneY, nextNode.x, nextNode.y);
+            
+            for (int i = pathIndex + 1; i < currentPath.size() - 1; i++) {
+                Location a = currentPath.get(i);
+                Location b = currentPath.get(i + 1);
+                g2d.drawLine(a.x, a.y, b.x, b.y);
+            }
+        }
+
         for (Location loc : graph.keySet()) {
-            if (loc == base) {
-                g2d.setColor(new Color(34, 139, 34)); // Verde para base
-                g2d.fillRect(loc.x - 12, loc.y - 12, 24, 24); // Base quadrada
+            if (loc.equals(base)) {
+                g2d.setColor(Color.WHITE);
+                g2d.fillOval(loc.x - 16, loc.y - 16, 32, 32);
+                g2d.setColor(new Color(34, 139, 34)); 
+                g2d.fillOval(loc.x - 12, loc.y - 12, 24, 24); 
             } else {
-                g2d.setColor(Color.DARK_GRAY);
-                g2d.fillOval(loc.x - 10, loc.y - 10, 20, 20);
+                g2d.setColor(Color.WHITE);
+                g2d.fillOval(loc.x - 12, loc.y - 12, 24, 24);
+                
+                if (entregasConcluidas.contains(loc)) {
+                    g2d.setColor(new Color(50, 205, 50)); 
+                } else {
+                    g2d.setColor(Color.ORANGE); 
+                }
+                g2d.fillOval(loc.x - 8, loc.y - 8, 16, 16);
             }
+            
+            g2d.setColor(new Color(255, 255, 255, 210));
+            g2d.fillRect(loc.x - 20, loc.y - 30, 48, 16);
             g2d.setColor(Color.BLACK);
-            g2d.setFont(new Font("Arial", Font.BOLD, 12));
-            g2d.drawString(loc.name, loc.x - 15, loc.y - 15);
+            g2d.setFont(new Font("Arial", Font.BOLD, 11));
+            g2d.drawString(loc.name, loc.x - 18, loc.y - 18);
         }
 
-        // Desenha Drone
-        if (currentPath != null || droneX == base.x) {
-            g2d.setColor(Color.BLUE);
-            g2d.fillOval((int) droneX - 8, (int) droneY - 8, 16, 16);
+        if (currentPath != null || (droneX == base.x && droneY == base.y)) {
+            AffineTransform oldTransform = g2d.getTransform();
+            
+            g2d.translate(droneX, droneY);
+            g2d.rotate(droneAngle);
+
+            g2d.setColor(Color.CYAN);
+            g2d.fillOval(-10, -10, 20, 20);
+            
+            g2d.setColor(Color.BLACK);
+            g2d.setStroke(new BasicStroke(2));
+            g2d.drawLine(-12, -12, 12, 12);
+            g2d.drawLine(-12, 12, 12, -12);
+            
+            g2d.setColor(Color.RED);
+            g2d.fillOval(-16, -16, 8, 8); 
+            g2d.fillOval(-16, 8, 8, 8);   
+            
+            g2d.setColor(new Color(50, 205, 50));
+            g2d.fillOval(8, -16, 8, 8);  
+            g2d.fillOval(8, 8, 8, 8);    
+            
+            g2d.setColor(Color.WHITE);
+            g2d.fillPolygon(new int[]{8, 14, 8}, new int[]{-4, 0, 4}, 3);
+
+            g2d.setTransform(oldTransform);
         }
 
-        // Desenha Status
+        g2d.setColor(new Color(255, 255, 255, 235)); 
+        g2d.fillRoundRect(15, 10, 520, 60, 15, 15); 
+        
         g2d.setColor(Color.BLACK);
         g2d.setFont(new Font("Arial", Font.BOLD, 14));
-        g2d.drawString("Status: " + statusMessage, 20, 30);
+        g2d.drawString("Status: " + statusMessage, 30, 30);
+        
+        g2d.drawString("Bateria:", 30, 53);
+        g2d.setColor(Color.RED);
+        g2d.fillRect(90, 43, 100, 12); 
+        
+        g2d.setColor(Color.GREEN);
+        int larguraBateria = (int) ((bateriaAtual / bateriaMaxima) * 100);
+        g2d.fillRect(90, 43, Math.max(0, larguraBateria), 12);
+        
+        g2d.setColor(Color.BLACK);
+        g2d.setStroke(new BasicStroke(1));
+        g2d.drawRect(90, 43, 100, 12);
     }
 
     // ==========================================
@@ -360,7 +590,7 @@ public class SimuladorDroneGUI extends JPanel {
     // ==========================================
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
-            JFrame frame = new JFrame("Simulador de Grafos: Drones (A-Star)");
+            JFrame frame = new JFrame("Simulador de Drone: A* e TSP Otimizado");
             frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
             frame.setSize(800, 600);
             frame.setLayout(new BorderLayout());
@@ -368,12 +598,11 @@ public class SimuladorDroneGUI extends JPanel {
             SimuladorDroneGUI canvas = new SimuladorDroneGUI();
             frame.add(canvas, BorderLayout.CENTER);
 
-            // Interface de Botões
             JPanel panel = new JPanel();
             panel.setBackground(Color.WHITE);
             
             JButton btnGerarMapa = new JButton("Gerar Novo Mapa");
-            JButton btnClima = new JButton("Mudar Clima (Obstáculos)");
+            JButton btnClima = new JButton("Mudar Clima (Obstáculo)");
             JButton btnTodasEntregas = new JButton("Fazer Todas as Entregas");
 
             btnGerarMapa.addActionListener(e -> canvas.gerarMapaAleatorio());
